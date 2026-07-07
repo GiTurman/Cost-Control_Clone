@@ -25,69 +25,54 @@ jobs:
       - name: Locate source
         shell: bash
         run: |
-          set -euo pipefail
           if [ -f "horeca-costcontrol-full-clone-modified.zip" ]; then
             cp horeca-costcontrol-full-clone-modified.zip source.zip
-          elif [ -f "local-clone/horeca-costcontrol-full-clone-modified.zip" ]; then
-            cp local-clone/horeca-costcontrol-full-clone-modified.zip source.zip
-          elif [ -f "local-clone/cost-control-clone-source.zip" ]; then
-            cp local-clone/cost-control-clone-source.zip source.zip
-          elif [ -f "cost-control-clone-source.zip" ]; then
-            cp cost-control-clone-source.zip source.zip
-          elif [ -f "local-clone/horeca-costcontrol-gt-main.zip" ]; then
-            cp local-clone/horeca-costcontrol-gt-main.zip source.zip
-          elif [ -f "horeca-costcontrol-gt-main.zip" ]; then
-            cp horeca-costcontrol-gt-main.zip source.zip
           else
             echo "Source ZIP was not found."
-            find . -maxdepth 3 -type f | sort
             exit 1
           fi
 
       - name: Extract source
-        run: |
-          unzip -q source.zip -d extracted
-          find extracted -maxdepth 3 -name package.json -print
+        run: unzip -q source.zip -d extracted
 
       - name: Detect app directory
         shell: bash
         run: |
-          set -euo pipefail
-          APP_DIR=$(dirname "$(find extracted -maxdepth 4 -name package.json | head -n 1)")
-          if [ -z "$APP_DIR" ] || [ "$APP_DIR" = "." ]; then
-            echo "Could not find app package.json inside ZIP."
-            find extracted -maxdepth 4 -type f | sort | head -n 200
-            exit 1
-          fi
+          APP_DIR=$(dirname "$(find extracted -maxdepth 5 -name package.json | head -n 1)")
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
           echo "Detected app directory: $APP_DIR"
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Patch GitHub Pages base path
+        shell: bash
+        run: |
+          if [ -f "${APP_DIR}/vite.config.ts" ]; then
+            sed -i 's#/HoReCa-CostControl/#/Cost-Control_Clone/#g' "${APP_DIR}/vite.config.ts"
+          fi
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 20
+          bun-version: latest
 
       - name: Install dependencies
         working-directory: ${{ env.APP_DIR }}
-        run: npm install
+        run: bun install
 
       - name: Build
         working-directory: ${{ env.APP_DIR }}
-        run: npm run build
+        run: bun run build
         env:
           GITHUB_PAGES: 'true'
 
       - name: Detect build output
         shell: bash
         run: |
-          set -euo pipefail
           if [ -d "${APP_DIR}/dist" ]; then
             echo "BUILD_DIR=${APP_DIR}/dist" >> "$GITHUB_ENV"
           elif [ -d "${APP_DIR}/.output/public" ]; then
             echo "BUILD_DIR=${APP_DIR}/.output/public" >> "$GITHUB_ENV"
           else
-            echo "No supported build output found. Expected dist or .output/public."
-            find "$APP_DIR" -maxdepth 3 -type d | sort
+            echo "No supported build output found."
             exit 1
           fi
 
