@@ -40,7 +40,6 @@ jobs:
         run: |
           APP_DIR=$(dirname "$(find extracted -maxdepth 5 -name package.json | head -n 1)")
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          echo "Detected app directory: $APP_DIR"
 
       - name: Patch GitHub Pages base path
         shell: bash
@@ -69,38 +68,33 @@ jobs:
         run: |
           if [ -d "${APP_DIR}/dist" ]; then
             echo "BUILD_DIR=${APP_DIR}/dist" >> "$GITHUB_ENV"
-          elif [ -d "${APP_DIR}/.output/public" ]; then
-            echo "BUILD_DIR=${APP_DIR}/.output/public" >> "$GITHUB_ENV"
           else
-            echo "No supported build output found."
-            exit 1
+            echo "BUILD_DIR=${APP_DIR}/.output/public" >> "$GITHUB_ENV"
           fi
 
       - name: Ensure static index
         shell: bash
         run: |
-          if [ ! -f "${BUILD_DIR}/index.html" ]; then
-            ENTRY=$(grep -rl "hydrateRoot\|createRoot" "${BUILD_DIR}/assets"/*.js | head -n 1)
-            CSS=$(find "${BUILD_DIR}/assets" -name "*.css" | head -n 1)
-            ENTRY_SRC=${ENTRY#${BUILD_DIR}/}
-            CSS_SRC=${CSS#${BUILD_DIR}/}
-            cat > "${BUILD_DIR}/index.html" <<EOF
+          ENTRY=$(find "${BUILD_DIR}/assets" -name "*.js" | head -n 1)
+          CSS=$(find "${BUILD_DIR}/assets" -name "*.css" | head -n 1)
+          ENTRY_SRC=${ENTRY#${BUILD_DIR}/}
+          CSS_SRC=${CSS#${BUILD_DIR}/}
+          cat > "${BUILD_DIR}/index.html" <<EOF
           <!doctype html>
           <html lang="en">
-            <head>
-              <meta charset="UTF-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-              <title>Cost Control Clone</title>
-              <link rel="stylesheet" href="/${{ github.event.repository.name }}/${CSS_SRC}" />
-            </head>
-            <body>
-              <script type="module" src="/${{ github.event.repository.name }}/${ENTRY_SRC}"></script>
-            </body>
+          <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>Cost Control Clone</title>
+          <link rel="stylesheet" href="/${{ github.event.repository.name }}/${CSS_SRC}" />
+          </head>
+          <body>
+          <div id="root"></div>
+          <script type="module" src="/${{ github.event.repository.name }}/${ENTRY_SRC}"></script>
+          </body>
           </html>
           EOF
-          fi
           cp "${BUILD_DIR}/index.html" "${BUILD_DIR}/404.html"
-          find "${BUILD_DIR}" -maxdepth 2 -type f | sort
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
