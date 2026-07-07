@@ -72,6 +72,19 @@ jobs:
             echo "BUILD_DIR=${APP_DIR}/.output/public" >> "$GITHUB_ENV"
           fi
 
+      - name: Patch built assets
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          root = pathlib.Path(__import__('os').environ['BUILD_DIR'])
+          for path in root.glob('assets/*.js'):
+              text = path.read_text()
+              text = text.replace('basepath:"Cost-Control_Clone"', 'basepath:"/Cost-Control_Clone"')
+              text = text.replace("basepath:'Cost-Control_Clone'", "basepath:'/Cost-Control_Clone'")
+              path.write_text(text)
+          PY
+
       - name: Ensure static index
         shell: bash
         run: |
