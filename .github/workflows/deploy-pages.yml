@@ -76,6 +76,32 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure static index
+        shell: bash
+        run: |
+          if [ ! -f "${BUILD_DIR}/index.html" ]; then
+            ENTRY=$(grep -rl "hydrateRoot\|createRoot" "${BUILD_DIR}/assets"/*.js | head -n 1)
+            CSS=$(find "${BUILD_DIR}/assets" -name "*.css" | head -n 1)
+            ENTRY_SRC=${ENTRY#${BUILD_DIR}/}
+            CSS_SRC=${CSS#${BUILD_DIR}/}
+            cat > "${BUILD_DIR}/index.html" <<EOF
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>Cost Control Clone</title>
+              <link rel="stylesheet" href="/${{ github.event.repository.name }}/${CSS_SRC}" />
+            </head>
+            <body>
+              <script type="module" src="/${{ github.event.repository.name }}/${ENTRY_SRC}"></script>
+            </body>
+          </html>
+          EOF
+          fi
+          cp "${BUILD_DIR}/index.html" "${BUILD_DIR}/404.html"
+          find "${BUILD_DIR}" -maxdepth 2 -type f | sort
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
