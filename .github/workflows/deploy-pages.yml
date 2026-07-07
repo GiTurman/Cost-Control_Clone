@@ -1,0 +1,105 @@
+name: Deploy Full Clone to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Locate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "local-clone/cost-control-clone-source.zip" ]; then
+            cp local-clone/cost-control-clone-source.zip source.zip
+          elif [ -f "cost-control-clone-source.zip" ]; then
+            cp cost-control-clone-source.zip source.zip
+          elif [ -f "local-clone/horeca-costcontrol-gt-main.zip" ]; then
+            cp local-clone/horeca-costcontrol-gt-main.zip source.zip
+          elif [ -f "horeca-costcontrol-gt-main.zip" ]; then
+            cp horeca-costcontrol-gt-main.zip source.zip
+          else
+            echo "Source ZIP was not found. Upload it as local-clone/cost-control-clone-source.zip or cost-control-clone-source.zip."
+            exit 1
+          fi
+
+      - name: Extract source
+        run: |
+          unzip -q source.zip -d extracted
+          find extracted -maxdepth 2 -name package.json -print
+
+      - name: Detect app directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_DIR=$(dirname "$(find extracted -maxdepth 3 -name package.json | head -n 1)")
+          if [ -z "$APP_DIR" ] || [ "$APP_DIR" = "." ]; then
+            echo "Could not find app package.json inside ZIP."
+            exit 1
+          fi
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Detected app directory: $APP_DIR"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm install
+
+      - name: Build
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run build
+        env:
+          GITHUB_PAGES: 'true'
+
+      - name: Detect build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "${APP_DIR}/dist" ]; then
+            echo "BUILD_DIR=${APP_DIR}/dist" >> "$GITHUB_ENV"
+          elif [ -d "${APP_DIR}/.output/public" ]; then
+            echo "BUILD_DIR=${APP_DIR}/.output/public" >> "$GITHUB_ENV"
+          else
+            echo "No supported build output found. Expected dist or .output/public."
+            find "$APP_DIR" -maxdepth 3 -type d | sort
+            exit 1
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.BUILD_DIR }}
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
