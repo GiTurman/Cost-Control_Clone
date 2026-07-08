@@ -2,8 +2,7 @@ name: Deploy Full Clone to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -39,14 +38,43 @@ jobs:
         shell: bash
         run: |
           APP_DIR=$(dirname "$(find extracted -maxdepth 5 -name package.json | head -n 1)")
+          if [ -z "$APP_DIR" ] || [ "$APP_DIR" = "." ]; then
+            echo "Could not detect app directory."
+            exit 1
+          fi
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Detected app directory: $APP_DIR"
 
-      - name: Patch GitHub Pages base path
+      - name: Patch source for GitHub Pages
         shell: bash
         run: |
-          if [ -f "${APP_DIR}/vite.config.ts" ]; then
-            sed -i 's#/HoReCa-CostControl/#/Cost-Control_Clone/#g' "${APP_DIR}/vite.config.ts"
-          fi
+          python3 - <<'PY'
+          import os, pathlib, re
+          app = pathlib.Path(os.environ['APP_DIR'])
+          base = '/Cost-Control_Clone'
+          rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2')
+          exts = {'.ts','.tsx','.js','.jsx','.mjs','.cjs','.json','.html'}
+          skip = {'node_modules','.git','dist','.output'}
+          changed = []
+          def patch(s):
+              s = rx.sub(lambda m: f'{m.group(1)}:"{base}"', s)
+              s = s.replace('/HoReCa-CostControl/', base + '/')
+              s = s.replace('/HoReCa-CostControl', base)
+              s = s.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
+              return s
+          for p in app.rglob('*'):
+              if p.is_dir() or p.suffix.lower() not in exts or any(x in skip for x in p.parts):
+                  continue
+              try:
+                  old = p.read_text()
+              except UnicodeDecodeError:
+                  continue
+              new = patch(old)
+              if new != old:
+                  p.write_text(new)
+                  changed.append(str(p.relative_to(app)))
+          print('Patched source files:', changed)
+          PY
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -68,46 +96,96 @@ jobs:
         run: |
           if [ -d "${APP_DIR}/dist" ]; then
             echo "BUILD_DIR=${APP_DIR}/dist" >> "$GITHUB_ENV"
-          else
+          elif [ -d "${APP_DIR}/.output/public" ]; then
             echo "BUILD_DIR=${APP_DIR}/.output/public" >> "$GITHUB_ENV"
+          else
+            echo "Build output was not found."
+            find "${APP_DIR}" -maxdepth 3 -type d | sort
+            exit 1
           fi
 
       - name: Patch built assets
         shell: bash
         run: |
           python3 - <<'PY'
-          import pathlib
-          root = pathlib.Path(__import__('os').environ['BUILD_DIR'])
-          for path in root.glob('assets/*.js'):
-              text = path.read_text()
-              text = text.replace('basepath:"Cost-Control_Clone"', 'basepath:"/Cost-Control_Clone"')
-              text = text.replace("basepath:'Cost-Control_Clone'", "basepath:'/Cost-Control_Clone'")
-              path.write_text(text)
+          import os, pathlib, re
+          root = pathlib.Path(os.environ['BUILD_DIR'])
+          base = '/Cost-Control_Clone'
+          rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2')
+          exts = {'.js','.mjs','.html','.css','.json','.svg','.map'}
+          changed = []
+          def patch(s):
+              s = rx.sub(lambda m: f'{m.group(1)}:"{base}"', s)
+              s = s.replace('/HoReCa-CostControl/', base + '/')
+              s = s.replace('/HoReCa-CostControl', base)
+              s = s.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
+              return s
+          for p in root.rglob('*'):
+              if p.is_dir() or p.suffix.lower() not in exts:
+                  continue
+              try:
+                  old = p.read_text()
+              except UnicodeDecodeError:
+                  continue
+              new = patch(old)
+              if new != old:
+                  p.write_text(new)
+                  changed.append(str(p.relative_to(root)))
+          print('Patched built files:', changed)
           PY
 
       - name: Ensure static index
         shell: bash
         run: |
-          ENTRY=$(find "${BUILD_DIR}/assets" -name "*.js" | head -n 1)
-          CSS=$(find "${BUILD_DIR}/assets" -name "*.css" | head -n 1)
-          ENTRY_SRC=${ENTRY#${BUILD_DIR}/}
-          CSS_SRC=${CSS#${BUILD_DIR}/}
-          cat > "${BUILD_DIR}/index.html" <<EOF
-          <!doctype html>
-          <html lang="en">
-          <head>
-          <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <title>Cost Control Clone</title>
-          <link rel="stylesheet" href="/${{ github.event.repository.name }}/${CSS_SRC}" />
-          </head>
-          <body>
-          <div id="root"></div>
-          <script type="module" src="/${{ github.event.repository.name }}/${ENTRY_SRC}"></script>
-          </body>
-          </html>
-          EOF
-          cp "${BUILD_DIR}/index.html" "${BUILD_DIR}/404.html"
+          python3 - <<'PY'
+          import os, pathlib, re
+          root = pathlib.Path(os.environ['BUILD_DIR'])
+          base = '/Cost-Control_Clone'
+          index = root / 'index.html'
+          def normalize(html):
+              html = html.replace('/HoReCa-CostControl/', base + '/')
+              html = html.replace('/HoReCa-CostControl', base)
+              for attr in ('src','href'):
+                  html = re.sub(rf'{attr}=([\'\"])(?:\./|/)?assets/', rf'{attr}=\1{base}/assets/', html)
+              if 'id="root"' not in html and "id='root'" not in html:
+                  html = re.sub(r'(<body[^>]*>)', r'\1\n<div id="root"></div>', html, count=1, flags=re.I)
+              return html
+          if index.exists():
+              index.write_text(normalize(index.read_text()))
+              print('Preserved and normalized existing index.html')
+          else:
+              assets = root / 'assets'
+              js = sorted(assets.glob('index-*.js')) if assets.exists() else []
+              if not js and assets.exists():
+                  for p in sorted(assets.glob('*.js')):
+                      t = p.read_text(errors='ignore')
+                      if any(x in t for x in ('createRoot','hydrateRoot','ReactDOM','RouterProvider')):
+                          js.append(p)
+              if not js and assets.exists():
+                  js = sorted(assets.glob('*.js'))
+              if not js:
+                  raise SystemExit('No JS entry asset found')
+              css = sorted(assets.glob('*.css')) if assets.exists() else []
+              entry = js[0].relative_to(root).as_posix()
+              css_tag = f'<link rel="stylesheet" href="{base}/{css[0].relative_to(root).as_posix()}" />' if css else ''
+              index.write_text(f'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cost Control Clone</title>
+{css_tag}
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="{base}/{entry}"></script>
+</body>
+</html>
+''')
+              print('Generated fallback index.html with entry:', entry)
+          (root / '404.html').write_text(index.read_text())
+          print('Copied index.html to 404.html')
+          PY
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
