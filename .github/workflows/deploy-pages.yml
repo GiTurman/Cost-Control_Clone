@@ -134,14 +134,22 @@ jobs:
           print('Patched built files:', changed)
           PY
 
-      - name: Ensure static index
+      - name: Ensure static index with cache busting
         shell: bash
         run: |
           python3 - <<'PY'
           import os, pathlib, re
           root = pathlib.Path(os.environ['BUILD_DIR'])
           base = '/Cost-Control_Clone'
+          version = os.environ.get('GITHUB_SHA', '')[:12]
+          cache = ('?v=' + version) if version else ''
           index = root / 'index.html'
+
+          def add_cache_to_assets(html):
+              html = re.sub(r'(src=[\'\"]' + re.escape(base) + r'/assets/[^\'\"?]+)(?:\?v=[^\'\"]*)?([\'\"])', r'\1' + cache + r'\2', html)
+              html = re.sub(r'(href=[\'\"]' + re.escape(base) + r'/assets/[^\'\"?]+)(?:\?v=[^\'\"]*)?([\'\"])', r'\1' + cache + r'\2', html)
+              return html
+
           def normalize(html):
               html = html.replace('/HoReCa-CostControl/', base + '/')
               html = html.replace('/HoReCa-CostControl', base)
@@ -149,10 +157,11 @@ jobs:
                   html = re.sub(rf'{attr}=([\'\"])(?:\./|/)?assets/', rf'{attr}=\1{base}/assets/', html)
               if 'id="root"' not in html and "id='root'" not in html:
                   html = re.sub(r'(<body[^>]*>)', r'\1\n<div id="root"></div>', html, count=1, flags=re.I)
-              return html
+              return add_cache_to_assets(html)
+
           if index.exists():
               index.write_text(normalize(index.read_text()))
-              print('Preserved and normalized existing index.html')
+              print('Preserved and normalized existing index.html with cache busting:', version)
           else:
               assets = root / 'assets'
               js = sorted(assets.glob('index-*.js')) if assets.exists() else []
@@ -167,7 +176,7 @@ jobs:
                   raise SystemExit('No JS entry asset found')
               css = sorted(assets.glob('*.css')) if assets.exists() else []
               entry = js[0].relative_to(root).as_posix()
-              css_tag = f'<link rel="stylesheet" href="{base}/{css[0].relative_to(root).as_posix()}" />' if css else ''
+              css_tag = f'<link rel="stylesheet" href="{base}/{css[0].relative_to(root).as_posix()}{cache}" />' if css else ''
               index.write_text(f'''<!doctype html>
 <html lang="en">
 <head>
@@ -178,11 +187,11 @@ jobs:
 </head>
 <body>
 <div id="root"></div>
-<script type="module" src="{base}/{entry}"></script>
+<script type="module" src="{base}/{entry}{cache}"></script>
 </body>
 </html>
 ''')
-              print('Generated fallback index.html with entry:', entry)
+              print('Generated fallback index.html with entry:', entry, 'cache:', version)
           (root / '404.html').write_text(index.read_text())
           print('Copied index.html to 404.html')
           PY
