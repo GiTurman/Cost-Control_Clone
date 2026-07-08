@@ -45,23 +45,41 @@ jobs:
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
           echo "Detected app directory: $APP_DIR"
 
-      - name: Patch source for GitHub Pages
+      - name: Patch source for GitHub Pages and TanStack Router
         shell: bash
         run: |
           python3 - <<'PY'
           import os, pathlib, re
           app = pathlib.Path(os.environ['APP_DIR'])
           base = '/Cost-Control_Clone'
-          rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2')
+          rx_base = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
+          rx_import = re.compile(r'import\s*\{([^}]+)\}\s*from\s*([\'\"])@tanstack/react-router\2')
+          rx_create_router = re.compile(r'createRouter\s*\(\s*\{')
           exts = {'.ts','.tsx','.js','.jsx','.mjs','.cjs','.json','.html'}
           skip = {'node_modules','.git','dist','.output'}
           changed = []
-          def patch(s):
-              s = rx.sub(lambda m: f'{m.group(1)}:"{base}"', s)
+
+          def patch_base(s):
+              s = rx_base.sub('', s)
               s = s.replace('/HoReCa-CostControl/', base + '/')
               s = s.replace('/HoReCa-CostControl', base)
               s = s.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
               return s
+
+          def patch_tanstack_hash_history(s):
+              if 'createRouter' not in s or '@tanstack/react-router' not in s:
+                  return s
+              if 'createHashHistory' not in s:
+                  def add_hash_import(m):
+                      names = m.group(1).strip()
+                      quote = m.group(2)
+                      return f'import {{ {names}, createHashHistory }} from {quote}@tanstack/react-router{quote}'
+                  s = rx_import.sub(add_hash_import, s, count=1)
+              if 'createHashHistory()' in s and 'history:' in s:
+                  return s
+              s = rx_create_router.sub('createRouter({ history: createHashHistory(),', s, count=1)
+              return s
+
           for p in app.rglob('*'):
               if p.is_dir() or p.suffix.lower() not in exts or any(x in skip for x in p.parts):
                   continue
@@ -69,7 +87,7 @@ jobs:
                   old = p.read_text()
               except UnicodeDecodeError:
                   continue
-              new = patch(old)
+              new = patch_tanstack_hash_history(patch_base(old))
               if new != old:
                   p.write_text(new)
                   changed.append(str(p.relative_to(app)))
@@ -111,11 +129,11 @@ jobs:
           import os, pathlib, re
           root = pathlib.Path(os.environ['BUILD_DIR'])
           base = '/Cost-Control_Clone'
-          rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2')
+          rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
           exts = {'.js','.mjs','.html','.css','.json','.svg','.map'}
           changed = []
           def patch(s):
-              s = rx.sub(lambda m: f'{m.group(1)}:"{base}"', s)
+              s = rx.sub('', s)
               s = s.replace('/HoReCa-CostControl/', base + '/')
               s = s.replace('/HoReCa-CostControl', base)
               s = s.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
