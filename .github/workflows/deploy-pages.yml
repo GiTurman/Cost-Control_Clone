@@ -61,8 +61,6 @@ jobs:
           rx_create_router = re.compile(r'createRouter\s*\(\s*\{')
 
           def remove_router_base_options(text):
-              # Remove TanStack Router basepath/basename regardless of how the value is written:
-              # literal string, import.meta.env.BASE_URL, variable, expression, etc.
               text = re.sub(r'\b(basepath|basename)\s*:\s*import\.meta\.env\.BASE_URL\s*,?', '', text)
               text = re.sub(r'\b(basepath|basename)\s*:\s*[\'\"][^\'\"]*[\'\"]\s*,?', '', text)
               text = re.sub(r'\b(basepath|basename)\s*:\s*[^,}\n]+\s*,?', '', text)
@@ -74,18 +72,34 @@ jobs:
               text = text.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
               return text
 
-          def patch_hash_history(text):
-              if 'createRouter' not in text or '@tanstack/react-router' not in text:
+          def ensure_hash_import(text):
+              if '@tanstack/react-router' not in text:
                   return text
+              if 'createHashHistory' in text:
+                  return text
+              def repl(match):
+                  names = match.group(1).strip()
+                  quote = match.group(2)
+                  return f'import {{ {names}, createHashHistory }} from {quote}@tanstack/react-router{quote}'
+              return rx_import.sub(repl, text, count=1)
+
+          def patch_hash_history(text):
+              if '@tanstack/react-router' not in text:
+                  return text
+
+              text = text.replace('createBrowserHistory', 'createHashHistory')
+              text = ensure_hash_import(text)
               text = remove_router_base_options(text)
-              if 'createHashHistory' not in text:
-                  def repl(match):
-                      names = match.group(1).strip()
-                      quote = match.group(2)
-                      return f'import {{ {names}, createHashHistory }} from {quote}@tanstack/react-router{quote}'
-                  text = rx_import.sub(repl, text, count=1)
-              if 'history:' not in text:
+
+              # Force common explicit history forms to hash-history with no basepath/options.
+              text = re.sub(r'const\s+history\s*=\s*createHashHistory\s*\([^)]*\)', 'const history = createHashHistory()', text, flags=re.S)
+              text = re.sub(r'let\s+history\s*=\s*createHashHistory\s*\([^)]*\)', 'let history = createHashHistory()', text, flags=re.S)
+              text = re.sub(r'var\s+history\s*=\s*createHashHistory\s*\([^)]*\)', 'var history = createHashHistory()', text, flags=re.S)
+              text = re.sub(r'history\s*:\s*createHashHistory\s*\([^)]*\)\s*,?', 'history: createHashHistory(),', text, flags=re.S)
+
+              if 'createRouter' in text and 'history:' not in text:
                   text = rx_create_router.sub('createRouter({ history: createHashHistory(),', text, count=1)
+
               return text
 
           for path in app.rglob('*'):
@@ -143,7 +157,6 @@ jobs:
           changed = []
 
           def patch(text):
-              # Remove any remaining minified or non-minified TanStack basepath/basename options.
               text = re.sub(r'\b(basepath|basename):import\.meta\.env\.BASE_URL,?', '', text)
               text = re.sub(r'\b(basepath|basename):[\'\"][^\'\"]*[\'\"],?', '', text)
               text = re.sub(r'\b(basepath|basename):[^,}]+,?', '', text)
