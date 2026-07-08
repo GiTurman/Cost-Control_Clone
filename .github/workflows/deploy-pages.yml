@@ -57,12 +57,18 @@ jobs:
           skip = {'node_modules', '.git', 'dist', '.output'}
           changed = []
 
-          rx_base = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
           rx_import = re.compile(r'import\s*\{([^}]+)\}\s*from\s*([\'\"])@tanstack/react-router\2', re.S)
           rx_create_router = re.compile(r'createRouter\s*\(\s*\{')
 
-          def patch_base(text):
-              text = rx_base.sub('', text)
+          def remove_router_base_options(text):
+              # Remove TanStack Router basepath/basename regardless of how the value is written:
+              # literal string, import.meta.env.BASE_URL, variable, expression, etc.
+              text = re.sub(r'\b(basepath|basename)\s*:\s*import\.meta\.env\.BASE_URL\s*,?', '', text)
+              text = re.sub(r'\b(basepath|basename)\s*:\s*[\'\"][^\'\"]*[\'\"]\s*,?', '', text)
+              text = re.sub(r'\b(basepath|basename)\s*:\s*[^,}\n]+\s*,?', '', text)
+              return text
+
+          def patch_paths(text):
               text = text.replace('/HoReCa-CostControl/', base + '/')
               text = text.replace('/HoReCa-CostControl', base)
               text = text.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
@@ -71,6 +77,7 @@ jobs:
           def patch_hash_history(text):
               if 'createRouter' not in text or '@tanstack/react-router' not in text:
                   return text
+              text = remove_router_base_options(text)
               if 'createHashHistory' not in text:
                   def repl(match):
                       names = match.group(1).strip()
@@ -88,7 +95,7 @@ jobs:
                   old = path.read_text()
               except UnicodeDecodeError:
                   continue
-              new = patch_hash_history(patch_base(old))
+              new = patch_hash_history(patch_paths(old))
               if new != old:
                   path.write_text(new)
                   changed.append(str(path.relative_to(app)))
@@ -133,11 +140,16 @@ jobs:
           root = pathlib.Path(os.environ['BUILD_DIR'])
           base = '/Cost-Control_Clone'
           exts = {'.js', '.mjs', '.html', '.css', '.json', '.svg', '.map'}
-          rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
           changed = []
 
           def patch(text):
-              text = rx.sub('', text)
+              # Remove any remaining minified or non-minified TanStack basepath/basename options.
+              text = re.sub(r'\b(basepath|basename):import\.meta\.env\.BASE_URL,?', '', text)
+              text = re.sub(r'\b(basepath|basename):[\'\"][^\'\"]*[\'\"],?', '', text)
+              text = re.sub(r'\b(basepath|basename):[^,}]+,?', '', text)
+              text = re.sub(r'\b(basepath|basename)\s*:\s*import\.meta\.env\.BASE_URL\s*,?', '', text)
+              text = re.sub(r'\b(basepath|basename)\s*:\s*[\'\"][^\'\"]*[\'\"]\s*,?', '', text)
+              text = re.sub(r'\b(basepath|basename)\s*:\s*[^,}\n]+\s*,?', '', text)
               text = text.replace('/HoReCa-CostControl/', base + '/')
               text = text.replace('/HoReCa-CostControl', base)
               text = text.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
