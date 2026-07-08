@@ -50,47 +50,49 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, pathlib, re
+
           app = pathlib.Path(os.environ['APP_DIR'])
           base = '/Cost-Control_Clone'
-          rx_base = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
-          rx_import = re.compile(r'import\s*\{([^}]+)\}\s*from\s*([\'\"])@tanstack/react-router\2')
-          rx_create_router = re.compile(r'createRouter\s*\(\s*\{')
-          exts = {'.ts','.tsx','.js','.jsx','.mjs','.cjs','.json','.html'}
-          skip = {'node_modules','.git','dist','.output'}
+          exts = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.html'}
+          skip = {'node_modules', '.git', 'dist', '.output'}
           changed = []
 
-          def patch_base(s):
-              s = rx_base.sub('', s)
-              s = s.replace('/HoReCa-CostControl/', base + '/')
-              s = s.replace('/HoReCa-CostControl', base)
-              s = s.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
-              return s
+          rx_base = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
+          rx_import = re.compile(r'import\s*\{([^}]+)\}\s*from\s*([\'\"])@tanstack/react-router\2', re.S)
+          rx_create_router = re.compile(r'createRouter\s*\(\s*\{')
 
-          def patch_tanstack_hash_history(s):
-              if 'createRouter' not in s or '@tanstack/react-router' not in s:
-                  return s
-              if 'createHashHistory' not in s:
-                  def add_hash_import(m):
-                      names = m.group(1).strip()
-                      quote = m.group(2)
+          def patch_base(text):
+              text = rx_base.sub('', text)
+              text = text.replace('/HoReCa-CostControl/', base + '/')
+              text = text.replace('/HoReCa-CostControl', base)
+              text = text.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
+              return text
+
+          def patch_hash_history(text):
+              if 'createRouter' not in text or '@tanstack/react-router' not in text:
+                  return text
+              if 'createHashHistory' not in text:
+                  def repl(match):
+                      names = match.group(1).strip()
+                      quote = match.group(2)
                       return f'import {{ {names}, createHashHistory }} from {quote}@tanstack/react-router{quote}'
-                  s = rx_import.sub(add_hash_import, s, count=1)
-              if 'createHashHistory()' in s and 'history:' in s:
-                  return s
-              s = rx_create_router.sub('createRouter({ history: createHashHistory(),', s, count=1)
-              return s
+                  text = rx_import.sub(repl, text, count=1)
+              if 'history:' not in text:
+                  text = rx_create_router.sub('createRouter({ history: createHashHistory(),', text, count=1)
+              return text
 
-          for p in app.rglob('*'):
-              if p.is_dir() or p.suffix.lower() not in exts or any(x in skip for x in p.parts):
+          for path in app.rglob('*'):
+              if path.is_dir() or path.suffix.lower() not in exts or any(part in skip for part in path.parts):
                   continue
               try:
-                  old = p.read_text()
+                  old = path.read_text()
               except UnicodeDecodeError:
                   continue
-              new = patch_tanstack_hash_history(patch_base(old))
+              new = patch_hash_history(patch_base(old))
               if new != old:
-                  p.write_text(new)
-                  changed.append(str(p.relative_to(app)))
+                  path.write_text(new)
+                  changed.append(str(path.relative_to(app)))
+
           print('Patched source files:', changed)
           PY
 
@@ -127,28 +129,32 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, pathlib, re
+
           root = pathlib.Path(os.environ['BUILD_DIR'])
           base = '/Cost-Control_Clone'
+          exts = {'.js', '.mjs', '.html', '.css', '.json', '.svg', '.map'}
           rx = re.compile(r'(basepath|basename)\s*:\s*([\'\"])/?(HoReCa-CostControl|Cost-Control_Clone)/?\2\s*,?')
-          exts = {'.js','.mjs','.html','.css','.json','.svg','.map'}
           changed = []
-          def patch(s):
-              s = rx.sub('', s)
-              s = s.replace('/HoReCa-CostControl/', base + '/')
-              s = s.replace('/HoReCa-CostControl', base)
-              s = s.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
-              return s
-          for p in root.rglob('*'):
-              if p.is_dir() or p.suffix.lower() not in exts:
+
+          def patch(text):
+              text = rx.sub('', text)
+              text = text.replace('/HoReCa-CostControl/', base + '/')
+              text = text.replace('/HoReCa-CostControl', base)
+              text = text.replace('HoReCa-CostControl/', 'Cost-Control_Clone/')
+              return text
+
+          for path in root.rglob('*'):
+              if path.is_dir() or path.suffix.lower() not in exts:
                   continue
               try:
-                  old = p.read_text()
+                  old = path.read_text()
               except UnicodeDecodeError:
                   continue
               new = patch(old)
               if new != old:
-                  p.write_text(new)
-                  changed.append(str(p.relative_to(root)))
+                  path.write_text(new)
+                  changed.append(str(path.relative_to(root)))
+
           print('Patched built files:', changed)
           PY
 
@@ -157,13 +163,14 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, pathlib, re
+
           root = pathlib.Path(os.environ['BUILD_DIR'])
           base = '/Cost-Control_Clone'
           version = os.environ.get('GITHUB_SHA', '')[:12]
           cache = ('?v=' + version) if version else ''
           index = root / 'index.html'
 
-          def add_cache_to_assets(html):
+          def add_cache(html):
               html = re.sub(r'(src=[\'\"]' + re.escape(base) + r'/assets/[^\'\"?]+)(?:\?v=[^\'\"]*)?([\'\"])', r'\1' + cache + r'\2', html)
               html = re.sub(r'(href=[\'\"]' + re.escape(base) + r'/assets/[^\'\"?]+)(?:\?v=[^\'\"]*)?([\'\"])', r'\1' + cache + r'\2', html)
               return html
@@ -171,45 +178,49 @@ jobs:
           def normalize(html):
               html = html.replace('/HoReCa-CostControl/', base + '/')
               html = html.replace('/HoReCa-CostControl', base)
-              for attr in ('src','href'):
+              for attr in ('src', 'href'):
                   html = re.sub(rf'{attr}=([\'\"])(?:\./|/)?assets/', rf'{attr}=\1{base}/assets/', html)
               if 'id="root"' not in html and "id='root'" not in html:
                   html = re.sub(r'(<body[^>]*>)', r'\1\n<div id="root"></div>', html, count=1, flags=re.I)
-              return add_cache_to_assets(html)
+              return add_cache(html)
 
           if index.exists():
               index.write_text(normalize(index.read_text()))
-              print('Preserved and normalized existing index.html with cache busting:', version)
+              print('Preserved and normalized existing index.html:', version)
           else:
               assets = root / 'assets'
               js = sorted(assets.glob('index-*.js')) if assets.exists() else []
               if not js and assets.exists():
-                  for p in sorted(assets.glob('*.js')):
-                      t = p.read_text(errors='ignore')
-                      if any(x in t for x in ('createRoot','hydrateRoot','ReactDOM','RouterProvider')):
-                          js.append(p)
+                  for path in sorted(assets.glob('*.js')):
+                      text = path.read_text(errors='ignore')
+                      if any(token in text for token in ('createRoot', 'hydrateRoot', 'ReactDOM', 'RouterProvider')):
+                          js.append(path)
               if not js and assets.exists():
                   js = sorted(assets.glob('*.js'))
               if not js:
                   raise SystemExit('No JS entry asset found')
               css = sorted(assets.glob('*.css')) if assets.exists() else []
               entry = js[0].relative_to(root).as_posix()
-              css_tag = f'<link rel="stylesheet" href="{base}/{css[0].relative_to(root).as_posix()}{cache}" />' if css else ''
-              index.write_text(f'''<!doctype html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Cost Control Clone</title>
-{css_tag}
-</head>
-<body>
-<div id="root"></div>
-<script type="module" src="{base}/{entry}{cache}"></script>
-</body>
-</html>
-''')
-              print('Generated fallback index.html with entry:', entry, 'cache:', version)
+              css_src = css[0].relative_to(root).as_posix() if css else ''
+              html = '\n'.join([
+                  '<!doctype html>',
+                  '<html lang="en">',
+                  '<head>',
+                  '<meta charset="UTF-8" />',
+                  '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+                  '<title>Cost Control Clone</title>',
+                  f'<link rel="stylesheet" href="{base}/{css_src}{cache}" />' if css_src else '',
+                  '</head>',
+                  '<body>',
+                  '<div id="root"></div>',
+                  f'<script type="module" src="{base}/{entry}{cache}"></script>',
+                  '</body>',
+                  '</html>',
+                  ''
+              ])
+              index.write_text(html)
+              print('Generated fallback index.html with entry:', entry)
+
           (root / '404.html').write_text(index.read_text())
           print('Copied index.html to 404.html')
           PY
